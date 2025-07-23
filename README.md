@@ -4,6 +4,8 @@
 
 A collaborative cellphone tower mapping platform built with a full-stack TypeScript monorepo architecture.
 
+> 🚀 **Now with auto-deployment!** Every commit automatically deploys to [sigint.party](https://sigint.party) via Orbiter.
+
 ## About sigint.party
 
 sigint.party is a community-driven application that enables users to contribute and explore cellphone tower information on an interactive world map. Similar to projects like Wigle, our platform crowdsources cellular infrastructure data to create a comprehensive database of tower locations, signal strengths, and network information.
