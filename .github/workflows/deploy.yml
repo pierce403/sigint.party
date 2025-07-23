@@ -1,0 +1,61 @@
+name: Deploy to Orbiter
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+
+    - name: Install dependencies
+      run: bun install
+
+    - name: Build shared package
+      run: bun run build --filter=shared
+
+    - name: Build client
+      run: bun run build --filter=client
+
+    - name: Prepare deployment files
+      run: |
+        cd client/dist
+        tar -czf ../../sigint-party-build.tar.gz .
+        cd ../..
+
+    - name: Deploy to Orbiter
+      env:
+        ORBITER_API_KEY: ${{ secrets.ORBITER_API_KEY }}
+        ORBITER_SITE_ID: ${{ secrets.ORBITER_SITE_ID }}
+      run: |
+        # Option 1: Using Orbiter CLI (if available)
+        if command -v orbiter &> /dev/null; then
+          echo "Deploying with Orbiter CLI..."
+          orbiter deploy client/dist --site-id=$ORBITER_SITE_ID
+        else
+          # Option 2: Using curl to upload via API
+          echo "Deploying via Orbiter API..."
+          curl -X POST \
+            -H "Authorization: Bearer $ORBITER_API_KEY" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @sigint-party-build.tar.gz \
+            "https://api.orbiter.host/v1/sites/$ORBITER_SITE_ID/deploy"
+        fi
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sigint-party-build
+        path: sigint-party-build.tar.gz
+        retention-days: 7 

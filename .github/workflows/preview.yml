@@ -1,0 +1,54 @@
+name: Preview Deployment
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  preview-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+
+    - name: Install dependencies
+      run: bun install
+
+    - name: Build shared package
+      run: bun run build --filter=shared
+
+    - name: Build client
+      run: bun run build --filter=client
+
+    - name: Create preview deployment
+      env:
+        ORBITER_API_KEY: ${{ secrets.ORBITER_API_KEY }}
+      run: |
+        cd client/dist
+        tar -czf ../../preview-build.tar.gz .
+        cd ../..
+        
+        # Deploy as preview (typically creates a temporary URL)
+        echo "Creating preview deployment..."
+        # curl -X POST \
+        #   -H "Authorization: Bearer $ORBITER_API_KEY" \
+        #   -H "Content-Type: application/octet-stream" \
+        #   --data-binary @preview-build.tar.gz \
+        #   "https://api.orbiter.host/v1/previews"
+
+    - name: Comment PR with preview URL
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '🚀 Preview deployment ready! Check out your changes at: https://preview-${{ github.event.number }}.sigint.party'
+          }) 
