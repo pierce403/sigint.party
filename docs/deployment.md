@@ -21,7 +21,7 @@ You'll need to add these secrets to your GitHub repository for auto-deployment w
 
 #### ORBITER_API_KEY
 - **Name**: `ORBITER_API_KEY`
-- **Value**: `key_JkEmMjwQbgWcAABZJF8sJExKqFde2EpL`
+- **Value**: `YOUR_ORBITER_API_KEY_HERE` ⚠️ **GET A NEW KEY - OLD ONE WAS COMPROMISED**
 
 #### ORBITER_SITE_ID
 - **Name**: `ORBITER_SITE_ID`  
