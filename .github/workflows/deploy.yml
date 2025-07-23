@@ -1,4 +1,4 @@
-name: Deploy to Orbiter
+name: Deploy to Orbiter & Update ENS
 
 on:
   push:
@@ -28,34 +28,113 @@ jobs:
     - name: Build client
       run: bun run build --filter=client
 
-    - name: Prepare deployment files
-      run: |
-        cd client/dist
-        tar -czf ../../sigint-party-build.tar.gz .
-        cd ../..
-
     - name: Deploy to Orbiter
+      id: deploy-orbiter
       env:
         ORBITER_API_KEY: ${{ secrets.ORBITER_API_KEY }}
         ORBITER_SITE_ID: ${{ secrets.ORBITER_SITE_ID }}
       run: |
-        # Option 1: Using Orbiter CLI (if available)
+        cd client/dist
+        tar -czf ../../sigint-party-build.tar.gz .
+        cd ../..
+        
+        # Deploy to Orbiter and capture IPFS CID
+        echo "Deploying to Orbiter..."
+        
+        # Try multiple deployment methods for reliability
+        IPFS_CID=""
+        
+        # Method 1: Try Orbiter CLI if available
         if command -v orbiter &> /dev/null; then
-          echo "Deploying with Orbiter CLI..."
-          orbiter deploy client/dist --site-id=$ORBITER_SITE_ID
-        else
-          # Option 2: Using curl to upload via API
-          echo "Deploying via Orbiter API..."
-          curl -X POST \
+          echo "Using Orbiter CLI..."
+          IPFS_CID=$(orbiter deploy client/dist --output json | jq -r '.ipfs_cid // empty')
+        fi
+        
+        # Method 2: If no CLI, use curl to upload via API
+        if [ -z "$IPFS_CID" ] && [ -n "$ORBITER_API_KEY" ]; then
+          echo "Using Orbiter API..."
+          RESPONSE=$(curl -X POST \
             -H "Authorization: Bearer $ORBITER_API_KEY" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @sigint-party-build.tar.gz \
-            "https://api.orbiter.host/v1/sites/$ORBITER_SITE_ID/deploy"
+            "https://api.orbiter.host/v1/sites/$ORBITER_SITE_ID/deploy" \
+            -w "%{http_code}" -o response.json)
+          
+          if [ "$RESPONSE" = "200" ]; then
+            IPFS_CID=$(cat response.json | jq -r '.ipfs_cid // .cid // empty')
+          fi
+        fi
+        
+        # Method 3: Alternative API endpoint
+        if [ -z "$IPFS_CID" ] && [ -n "$ORBITER_API_KEY" ]; then
+          echo "Trying alternative Orbiter API..."
+          RESPONSE=$(curl -X POST \
+            -H "X-API-Key: $ORBITER_API_KEY" \
+            -F "file=@sigint-party-build.tar.gz" \
+            -F "domain=$ORBITER_SITE_ID" \
+            "https://orbiter.host/api/deploy" \
+            -w "%{http_code}" -o response2.json)
+          
+          if [ "$RESPONSE" = "200" ]; then
+            IPFS_CID=$(cat response2.json | jq -r '.ipfs_hash // .ipfs_cid // .hash // empty')
+          fi
+        fi
+        
+        # Output CID for next step
+        if [ -n "$IPFS_CID" ]; then
+          echo "Successfully deployed to Orbiter!"
+          echo "IPFS CID: $IPFS_CID"
+          echo "ipfs_cid=$IPFS_CID" >> $GITHUB_OUTPUT
+          echo "🚀 Deployment successful: https://$IPFS_CID.ipfs.dweb.link"
+        else
+          echo "❌ Failed to get IPFS CID from Orbiter deployment"
+          exit 1
         fi
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+    - name: Update ENS contenthash for sigint.eth
+      if: steps.deploy-orbiter.outputs.ipfs_cid != ''
+      uses: aquiladev/ddns-action@v0.3.0
       with:
-        name: sigint-party-build
-        path: sigint-party-build.tar.gz
-        retention-days: 7 
+        mnemonic: ${{ secrets.ENS_MNEMONIC }}
+        rpc: ${{ secrets.ETHEREUM_RPC_URL }}
+        name: 'sigint.eth'
+        contentHash: ${{ steps.deploy-orbiter.outputs.ipfs_cid }}
+        contentType: 'ipfs-ns'
+        verbose: true
+
+    - name: Comment PR with deployment info
+      if: github.event_name == 'pull_request' && steps.deploy-orbiter.outputs.ipfs_cid != ''
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const ipfsCid = '${{ steps.deploy-orbiter.outputs.ipfs_cid }}';
+          const comment = `🚀 **Preview Deployment Successful!**
+          
+          **IPFS CID**: \`${ipfsCid}\`
+          
+          **Preview URLs**:
+          - 🌍 [IPFS Gateway](https://${ipfsCid}.ipfs.dweb.link)
+          - 🔗 [IPFS Browser](https://${ipfsCid}.ipfs.inbrowser.link)
+          - 🌐 [W3S Gateway](https://${ipfsCid}.ipfs.w3s.link)
+          
+          ${github.event_name === 'push' ? '**ENS Update**: sigint.eth now points to this deployment! 🎯' : '**Note**: ENS (sigint.eth) will only update on main branch deployments.'}
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Update deployment status
+      if: always()
+      run: |
+        if [ "${{ steps.deploy-orbiter.outputs.ipfs_cid }}" != "" ]; then
+          echo "✅ Deployment completed successfully!"
+          echo "📡 sigint.party is now live at: https://sigint.eth"
+          echo "🔗 IPFS CID: ${{ steps.deploy-orbiter.outputs.ipfs_cid }}"
+        else
+          echo "❌ Deployment failed - check logs above"
+          exit 1
+        fi 
